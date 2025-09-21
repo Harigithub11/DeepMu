@@ -38,5 +38,13 @@ python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-dotenv==0.20.0
 pydantic==2.6.2
+pydantic-settings==2.1.0
 gunicorn==21.2.0
 httpx==0.25.2
+
+# Additional Dependencies for Document Processing
+python-magic-bin==0.4.14  # Windows binary for python-magic
+werkzeug==2.3.7
+pillow==10.0.1
+pandas==2.0.3
+openpyxl==3.1.2  # Excel file support
