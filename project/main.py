@@ -12,6 +12,8 @@ from api.routes import documents, search, research, monitoring
 from services.qdrant_service import qdrant_service
 from services.cache_service import cache_service
 from services.monitoring_service import monitoring_service
+from services.hybrid_search_service import hybrid_search_service
+from services.ai_service import ai_service
 import logging
 
 logger = logging.getLogger(__name__)
@@ -23,6 +25,8 @@ async def lifespan(app: FastAPI):
     await qdrant_service.initialize()
     await cache_service.initialize()
     await monitoring_service.initialize()
+    await hybrid_search_service.initialize()
+    await ai_service.initialize()
     
     # Domain health check
     domain_health = await env_manager.validate_domain_connectivity()

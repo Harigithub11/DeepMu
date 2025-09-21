@@ -1,13 +1,19 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
+from typing import List, Optional
+
 from services.hybrid_search_service import hybrid_search_service
+from models.schemas import SearchQuery, HybridSearchResponse
 
 router = APIRouter()
 
-@router.get("/query")
-async def search_documents(query: str = Query(...), limit: int = 10):
+@router.post("/hybrid", response_model=HybridSearchResponse)
+async def hybrid_search(
+    search_query: SearchQuery,
+    limit: int = Query(10, ge=1, le=100)
+):
     """Perform hybrid search across multiple backends"""
     try:
-        results = await hybrid_search_service.search(query, limit)
+        results = await hybrid_search_service.hybrid_search(search_query, limit)
         return results
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
