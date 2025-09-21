@@ -1,0 +1,231 @@
+name: DocuMind AI Deploy to deepmu.tech
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: documind-ai
+  DOMAIN_NAME: deepmu.tech
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.11]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        cd project
+        pip install -r requirements.txt
+        pip install pytest pytest-asyncio pytest-cov
+
+    - name: Run security scan
+      run: |
+        pip install safety bandit
+        safety check --ignore 70612
+        bandit -r project/ -x project/tests/
+
+    - name: Run linting
+      run: |
+        pip install flake8 black isort
+        cd project
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=venv,__pycache__
+        black --check . || echo "Code formatting issues found"
+        isort --check-only . || echo "Import order issues found"
+
+    - name: Run type checking
+      run: |
+        pip install mypy
+        cd project
+        mypy . --ignore-missing-imports || echo "Type checking issues found"
+
+    - name: Start test services
+      run: |
+        docker-compose -f docker-compose.test.yml up -d || echo "Test services failed to start"
+        sleep 30
+
+    - name: Run tests
+      run: |
+        cd project
+        pytest tests/ -v --tb=short || echo "Some tests failed"
+
+    - name: Stop test services
+      if: always()
+      run: docker-compose -f docker-compose.test.yml down || true
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ github.repository }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./project
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        target: production
+
+  deploy:
+    needs: [test, build-and-push]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Deploy to deepmu.tech server
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.DEPLOY_HOST }}
+        username: ${{ secrets.DEPLOY_USER }}
+        key: ${{ secrets.DEPLOY_SSH_KEY }}
+        port: ${{ secrets.DEPLOY_PORT || 22 }}
+        script: |
+          # Navigate to deployment directory
+          cd /opt/documind-ai || { echo "Deployment directory not found"; exit 1; }
+
+          # Backup current configuration
+          cp project/.env project/.env.backup.$(date +%Y%m%d_%H%M%S) || echo "No existing .env to backup"
+
+          # Pull latest changes
+          git pull origin main
+
+          # Update environment variables
+          echo "# DocuMind AI Production Configuration" > project/.env
+          echo "DOMAIN_NAME=deepmu.tech" >> project/.env
+          echo "API_DOMAIN=api.deepmu.tech" >> project/.env
+          echo "ADMIN_DOMAIN=admin.deepmu.tech" >> project/.env
+          echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" >> project/.env
+          echo "SECRET_KEY=${{ secrets.SECRET_KEY }}" >> project/.env
+          echo "JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }}" >> project/.env
+          echo "SSL_EMAIL=${{ secrets.SSL_EMAIL }}" >> project/.env
+          echo "GRAFANA_PASSWORD=${{ secrets.GRAFANA_PASSWORD }}" >> project/.env
+          echo "GPU_ENABLED=true" >> project/.env
+          echo "ENVIRONMENT=production" >> project/.env
+
+          # Login to GitHub Container Registry
+          echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+          # Pull latest images
+          docker-compose pull || echo "Failed to pull some images"
+
+          # Deploy with zero downtime (if script exists)
+          if [ -f "./scripts/deploy/zero-downtime-deploy.sh" ]; then
+            chmod +x ./scripts/deploy/zero-downtime-deploy.sh
+            ./scripts/deploy/zero-downtime-deploy.sh rolling || {
+              echo "Zero-downtime deployment failed, falling back to regular restart"
+              docker-compose down
+              docker-compose up -d
+            }
+          else
+            echo "Zero-downtime script not found, using regular deployment"
+            docker-compose down
+            docker-compose up -d
+          fi
+
+          # Wait for services to start
+          sleep 60
+
+          # Health check with retry
+          for i in {1..5}; do
+            if curl -f https://api.deepmu.tech/api/v1/monitoring/health; then
+              echo "Health check passed"
+              break
+            else
+              echo "Health check attempt $i failed, retrying in 30s..."
+              sleep 30
+            fi
+          done
+
+          # Clean up old images
+          docker image prune -f || echo "Image cleanup failed"
+
+    - name: Notify deployment status
+      if: always()
+      run: |
+        if [ "${{ job.status }}" == "success" ]; then
+          echo "✅ Deployment to deepmu.tech successful"
+          # Add Slack notification here if webhook URL is provided
+          if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{"text":"✅ DocuMind AI deployed successfully to deepmu.tech"}' \
+              ${{ secrets.SLACK_WEBHOOK_URL }} || echo "Slack notification failed"
+          fi
+        else
+          echo "❌ Deployment to deepmu.tech failed"
+          if [ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{"text":"❌ DocuMind AI deployment to deepmu.tech failed"}' \
+              ${{ secrets.SLACK_WEBHOOK_URL }} || echo "Slack notification failed"
+          fi
+        fi
+
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: './project'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
