@@ -11,6 +11,7 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
+      - "8001:8001"
     environment:
       - ENVIRONMENT=production
       - DOMAIN_NAME=${DOMAIN_NAME:-deepmu.tech}
@@ -33,8 +34,13 @@ services:
       - elasticsearch
     networks:
       - documind-network
+    security_opt:
+      - seccomp:docker-default
+      - apparmor:docker-default
     deploy:
       resources:
+        limits:
+          memory: 1GB
         reservations:
           devices:
             - driver: nvidia

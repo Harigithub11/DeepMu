@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deepmu-app
+  labels:
+    app: deepmu
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: deepmu
+  template:
+    metadata:
+      labels:
+        app: deepmu
+    spec:
+      containers:
+      - name: deepmu
+        image: docker.io/harigithub11/deepmu:latest
+        ports:
+        - containerPort: 8000
+        envFrom:
+        - secretRef:
+            name: deepmu-secrets
+        resources:
+          limits:
+            memory: "1Gi"
+            cpu: "1"
+        lifecycle:
+          preStop:
+            exec:
+              command: ["sh", "-c", "sleep 10"]
+      imagePullSecrets:
+      - name: docker-hub-secret
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: deepmu-autoscaler
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: deepmu-app
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 80

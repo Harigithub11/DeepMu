@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./indices:/app/indices
+      - ./cache:/app/cache
+      - ./logs:/app/logs
+      - /etc/letsencrypt:/etc/letsencrypt:ro  # SSL certificates
+    environment:
+      - DOMAIN_NAME=deepmu.tech
+      - API_DOMAIN=api.deepmu.tech
+      - QDRANT_HOST=qdrant
+      - REDIS_URL=redis://redis:6379/0
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - SSL_ENABLED=true
+      - SSL_CERT_PATH=/etc/letsencrypt/live/deepmu.tech/fullchain.pem
+      - SSL_KEY_PATH=/etc/letsencrypt/live/deepmu.tech/privkey.pem
+    depends_on:
+      - redis
+      - qdrant
+      - elasticsearch
+    networks:
+      - documind-network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    networks:
+      - documind-network
+
+  qdrant:
+    image: qdrant/qdrant:v1.7.0
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    networks:
+      - documind-network
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - xpack.security.enabled=false
+    networks:
+      - documind-network
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ./nginx/ssl-params.conf:/etc/nginx/ssl-params.conf
+    depends_on:
+      - app
+    networks:
+      - documind-network
+
+volumes:
+  redis_data:
+  qdrant_data:
+  elasticsearch_data:
+
+networks:
+  documind-network:
+    driver: bridge
