@@ -1,135 +1,133 @@
-# DocuMind AI Research Agent
+# DocuMind AI Research Agent - Docker Deployment
 
-Advanced hybrid search and AI research system with Qdrant, Redis, FAISS, and Elasticsearch integration.
+This repository contains the Docker configuration for deploying the DocuMind AI Research Agent with SSL automation for the deepmu.tech domain.
 
-## Project Structure
+## Architecture Overview
 
-```
-project/
-├── main.py                 # Main FastAPI application
-├── requirements.txt        # Python dependencies
-├── Dockerfile              # Docker configuration for GPU optimization
-├── docker-compose.yml      # Multi-container Docker setup
-├── .env.example            # Example environment variables
-├── .env.production         # Production environment variables
-├── config/
-│   ├── __init__.py
-│   ├── settings.py         # Configuration management
-│   ├── environment_manager.py # Environment and domain management
-│   └── redis_client.py     # Redis connection management
-├── services/
-│   ├── __init__.py
-│   ├── qdrant_service.py   # Qdrant vector database service
-│   ├── hybrid_search_service.py # Multi-backend search service
-│   ├── document_service.py # Document processing service
-│   ├── ai_service.py       # AI research service
-│   ├── cache_service.py    # Redis caching service
-│   └── monitoring_service.py # Monitoring service
-├── api/
-│   ├── __init__.py
-│   ├── middleware.py       # Application middleware
-│   └── routes/
-│       ├── __init__.py
-│       ├── documents.py    # Document upload and processing endpoints
-│       ├── search.py       # Hybrid search endpoints
-│       ├── research.py     # AI analysis endpoints
-│       └── monitoring.py   # Health and metrics endpoints
-├── models/
-│   ├── __init__.py
-│   └── schemas.py          # Pydantic models
-├── utils/
-│   ├── __init__.py
-│   ├── text_processing.py  # NLP utilities
-│   └── domain_health.py    # Domain health checking
-├── scripts/
-│   └── ssl_setup.sh        # SSL certificate setup script
-└── nginx/
-    ├── nginx.conf          # Nginx configuration
-    └── ssl-params.conf     # SSL security parameters
-```
+The system consists of the following components:
 
-## Features
+1. **Main API Service**: FastAPI application with GPU support for RTX 3060
+2. **Qdrant Vector Database**: For semantic search capabilities
+3. **Redis Cache**: For caching frequently accessed data
+4. **Elasticsearch**: For full-text search capabilities
+5. **Nginx Reverse Proxy**: With SSL termination and rate limiting
+6. **Certbot**: For automated SSL certificate management
+7. **Prometheus & Grafana**: For monitoring and visualization
 
-- **Hybrid Vector Search**: Integration with Qdrant, Redis, FAISS, and Elasticsearch
-- **Multi-format Document Processing**: Support for PDF, DOCX, TXT, and more
-- **AI Research Capabilities**: Integration with Gemini API and research frameworks
-- **Advanced Caching**: Redis-based caching strategies
-- **Comprehensive Monitoring**: Prometheus and GPU monitoring
-- **Secure Deployment**: SSL automation and security hardening
-- **Flexible Environment Management**: Support for development and production environments
+## Prerequisites
+
+- Docker Engine (version 20.10+)
+- Docker Compose (version 1.28+)
+- NVIDIA Container Toolkit (for GPU support)
+- Domain name pointing to your server (deepmu.tech)
 
 ## Quick Start
 
-1. **Clone the repository**
-```bash
-git clone https://github.com/Harigithub11/DeepMu.git
-cd DeepMu/project
-```
-
-2. **Set up environment variables**
+1. **Set up environment variables**:
 ```bash
 cp .env.example .env
-# Edit .env with your configuration
+# Edit .env with your actual values
 ```
 
-3. **Install dependencies**
+2. **Build and start the services**:
 ```bash
-pip install -r requirements.txt
+docker-compose build
+docker-compose up -d
 ```
 
-4. **Run with Docker (recommended)**
+3. **Initialize SSL certificates**:
 ```bash
-docker-compose up --build
+# For staging (recommended for testing)
+STAGING=1 ./scripts/ssl/init-ssl.sh
+
+# For production (after verifying staging works)
+./scripts/ssl/init-ssl.sh
 ```
 
-5. **Run locally**
-```bash
-uvicorn main:app --reload --port 8000
+## Directory Structure
+
+```
+project/
+├── Dockerfile              # Multi-stage Docker build
+├── docker-compose.yml      # Complete service orchestration
+├── nginx/
+│   └── nginx.conf         # Nginx reverse proxy configuration
+├── scripts/
+│   ├── entrypoint.sh      # Application startup script
+│   ├── health-check.py    # Health check script
+│   └── ssl/
+│       ├── init-ssl.sh    # SSL certificate initialization
+│       └── renew-certificates.sh # Certificate renewal script
+└── monitoring/
+    └── prometheus.yml     # Prometheus monitoring configuration
 ```
 
-## Environment Configuration
+## SSL Certificate Management
 
-The application supports multiple environments:
-- `.env` - Development environment
-- `.env.production` - Production environment
+The deployment includes automated SSL certificate management using Let's Encrypt:
 
-Environment variables include:
-- Domain configuration (deepmu.tech and subdomains)
-- Database connections (Qdrant, Redis, Elasticsearch)
-- SSL settings
-- Security keys
-- Feature flags
+- **Initialization**: `./scripts/ssl/init-ssl.sh` - Obtains certificates for all subdomains
+- **Renewal**: Automatically handled by Certbot every 12 hours
+- **Domains Supported**: 
+  - deepmu.tech
+  - api.deepmu.tech
+  - admin.deepmu.tech
+  - docs.deepmu.tech
 
-## SSL Automation
+## GPU Support
 
-The project includes:
-- SSL setup script (`scripts/ssl_setup.sh`)
-- Nginx configuration with SSL parameters
-- Automatic certificate renewal setup
-- Domain health checking
+The Docker configuration includes GPU support for RTX 3060:
 
-## API Endpoints
+- Uses `nvidia/cuda:11.8-runtime-ubuntu22.04` base image
+- Configured with proper GPU device access
+- GPU-enabled services will automatically detect and use available GPUs
 
-- `/` - Root endpoint
-- `/health` - Health check
-- `/api/v1/documents` - Document operations
-- `/api/v1/search` - Hybrid search
-- `/api/v1/research` - AI analysis
-- `/api/v1/monitoring` - Metrics and health
+## Monitoring
+
+The system includes monitoring with:
+
+- **Prometheus**: Collects metrics from all services
+- **Grafana**: Provides dashboards for system monitoring
+- **Health Checks**: Built-in health checks for all services
 
 ## Security Features
 
-- CORS configuration for deepmu.tech domains
+- SSL/TLS encryption for all communications
+- Rate limiting at the Nginx level
 - Security headers in all responses
-- Environment-based security settings
-- SSL/TLS encryption
-- Rate limiting
-- Feature flag controls
+- HTTPS redirect for all HTTP requests
+- GPU isolation for security
+- Non-root user for application containers
 
-## Performance Optimization
+## Service Endpoints
 
-- Redis caching for frequently accessed data
-- Asynchronous operations
-- Efficient vector search algorithms
-- GPU-optimized Docker configuration
-- Memory profiling and monitoring
+- **API**: https://api.deepmu.tech/api/v1/
+- **Admin Dashboard**: https://admin.deepmu.tech/grafana/
+- **Monitoring**: https://admin.deepmu.tech/prometheus/
+- **Health Check**: https://api.deepmu.tech/health
+
+## Troubleshooting
+
+### Common Issues
+
+1. **GPU Not Detected**: Ensure NVIDIA Container Toolkit is installed
+2. **SSL Certificate Errors**: Check DNS records and firewall settings
+3. **Port Conflicts**: Verify no other services are using ports 80/443
+4. **Volume Permissions**: Ensure proper ownership of volume directories
+
+### Logs
+
+View service logs:
+```bash
+docker-compose logs -f documind-api
+docker-compose logs -f nginx
+docker-compose logs -f certbot
+```
+
+## Production Considerations
+
+- Configure proper backups for persistent volumes
+- Monitor resource usage regularly
+- Set up alerting for service failures
+- Regularly update container images
+- Review and rotate secrets periodically

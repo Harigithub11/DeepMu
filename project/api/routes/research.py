@@ -1,7 +1,10 @@
-from fastapi import APIRouter, HTTPException
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, status, Request
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from services.ai_service import ai_service
+from services.monitoring_service import monitoring_service
+from api.middleware import rate_limit, validate_domain, require_api_key
 from models.schemas import (
     DocumentAnalysisRequest, DocumentAnalysisResponse,
     ResearchInsightRequest, ResearchInsightResponse,
@@ -9,45 +12,91 @@ from models.schemas import (
 )
 
 router = APIRouter()
+security = HTTPBearer()
 
-@router.post("/analyze", response_model=DocumentAnalysisResponse)
-async def analyze_document(request: DocumentAnalysisRequest):
-    """Analyze document content using AI models"""
-    try:
-        result = await ai_service.analyze_document(request)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@router.post(
+    "/analyze",
+    response_model=DocumentAnalysisResponse,
+    summary="Analyze document with AI",
+    description="Perform AI-powered analysis of document content"
+)
+@rate_limit(requests_per_minute=5)  # Lower limit for AI operations
+@validate_domain
+@require_api_key
+async def analyze_document(
+    request: Request,
+    analysis_request: DocumentAnalysisRequest,
+    background_tasks: BackgroundTasks,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+) -> DocumentAnalysisResponse:
+    """Analyze document using AI models"""
 
-@router.post("/insights", response_model=ResearchInsightResponse)
-async def generate_research_insights(request: ResearchInsightRequest):
-    """Generate research insights from multiple documents"""
     try:
-        result = await ai_service.generate_research_insights(request)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Add domain to metadata
+        analysis_request.metadata["domain"] = "deepmu.tech"
+        analysis_request.metadata["client_ip"] = request.client.host
 
-@router.post("/summarize", response_model=SummarizationResponse)
-async def summarize_content(request: SummarizationRequest):
-    """Summarize content using AI models"""
-    try:
-        # For now, we'll implement a basic summarization
-        # In a full implementation, this would use the AI models
-        summary = request.content[:request.max_length]  # Simplified for now
-        compression_ratio = len(summary) / len(request.content) if request.content else 1.0
-        
-        return SummarizationResponse(
-            original_length=len(request.content),
-            summary=summary,
-            compression_ratio=compression_ratio,
-            confidence_score=0.8
+        # Perform analysis
+        result = await ai_service.analyze_document(analysis_request)
+
+        # Log AI usage
+        background_tasks.add_task(
+            monitoring_service.log_ai_usage,
+            {
+                "operation": "document_analysis",
+                "document_id": analysis_request.document_id,
+                "processing_time": result.processing_time,
+                "models_used": result.models_used,
+                "domain": "deepmu.tech"
+            }
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/health")
-async def research_health():
-    """Health check for research service"""
-    health = await ai_service.health_check()
-    return {"status": "healthy" if health else "unhealthy"}
+        return result
+
+    except Exception as e:
+        await monitoring_service.log_error("document_analysis_failed", str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Analysis failed"
+        )
+
+@router.post(
+    "/insights",
+    response_model=ResearchInsightResponse,
+    summary="Generate research insights",
+    description="Generate comprehensive research insights from multiple documents"
+)
+@rate_limit(requests_per_minute=3)  # Very low limit for intensive operations
+@validate_domain
+@require_api_key
+async def generate_insights(
+    request: Request,
+    insight_request: ResearchInsightRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+) -> ResearchInsightResponse:
+    """Generate research insights using AI"""
+
+    try:
+        # Add domain to metadata
+        insight_request.metadata["domain"] = "deepmu.tech"
+
+        # Validate request
+        if len(insight_request.documents) > 10:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Maximum 10 documents allowed per request"
+            )
+
+        # Generate insights
+        result = await ai_service.generate_research_insights(insight_request)
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        await monitoring_service.log_error("research_insights_failed", str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Insight generation failed"
+        )

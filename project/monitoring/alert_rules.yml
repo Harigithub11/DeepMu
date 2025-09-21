@@ -1,0 +1,90 @@
+groups:
+- name: documind-alerts
+  rules:
+  # API Health Alerts
+  - alert: DocumentMindAPIDown
+    expr: up{job="documind-api"} == 0
+    for: 1m
+    labels:
+      severity: critical
+      service: documind-api
+      domain: deepmu.tech
+    annotations:
+      summary: "DocuMind API is down"
+      description: "DocuMind API has been down for more than 1 minute."
+
+  - alert: HighAPIResponseTime
+    expr: rate(http_request_duration_seconds_sum[5m]) / rate(http_request_duration_seconds_count[5m]) > 2
+    for: 2m
+    labels:
+      severity: warning
+      service: documind-api
+      domain: deepmu.tech
+    annotations:
+      summary: "High API response time"
+      description: "API response time is above 2 seconds for the last 2 minutes."
+
+  # SSL Certificate Alerts
+  - alert: SSLCertificateExpiringSoon
+    expr: ssl_cert_not_after - time() < 86400 * 7
+    for: 1h
+    labels:
+      severity: warning
+      service: ssl
+      domain: deepmu.tech
+    annotations:
+      summary: "SSL certificate expiring soon"
+      description: "SSL certificate for {{ $labels.instance }} expires in less than 7 days."
+
+  - alert: SSLCertificateExpired
+    expr: ssl_cert_not_after - time() <= 0
+    for: 1m
+    labels:
+      severity: critical
+      service: ssl
+      domain: deepmu.tech
+    annotations:
+      summary: "SSL certificate expired"
+      description: "SSL certificate for {{ $labels.instance }} has expired."
+
+  # Database Alerts
+  - alert: QdrantDown
+    expr: up{job="qdrant"} == 0
+    for: 1m
+    labels:
+      severity: critical
+      service: qdrant
+    annotations:
+      summary: "Qdrant database is down"
+      description: "Qdrant vector database has been down for more than 1 minute."
+
+  - alert: RedisDown
+    expr: up{job="redis"} == 0
+    for: 1m
+    labels:
+      severity: critical
+      service: redis
+    annotations:
+      summary: "Redis cache is down"
+      description: "Redis cache has been down for more than 1 minute."
+
+  # System Resource Alerts
+  - alert: HighMemoryUsage
+    expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes > 0.9
+    for: 2m
+    labels:
+      severity: warning
+      service: system
+    annotations:
+      summary: "High memory usage"
+      description: "Memory usage is above 90% for the last 2 minutes."
+
+  - alert: HighDiskUsage
+    expr: (node_filesystem_size_bytes - node_filesystem_avail_bytes) / node_filesystem_size_bytes > 0.85
+    for: 5m
+    labels:
+      severity: warning
+      service: system
+    annotations:
+      summary: "High disk usage"
+      description: "Disk usage is above 85% for the last 5 minutes."
